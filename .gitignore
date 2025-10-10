@@ -1,0 +1,5 @@
+# Build outputs
+install/
+artifacts/
+ffmpeg-*/
+ffmpeg.tar.xz
