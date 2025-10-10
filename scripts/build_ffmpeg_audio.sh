@@ -188,7 +188,11 @@ build_ffmpeg() {
   esac
   
   # Add codec flags from configuration
-  mapfile -t codec_flags < <(build_codec_flags)
+  # Use a while loop instead of mapfile for Bash 3.x compatibility (macOS)
+  local codec_flags=()
+  while IFS= read -r line; do
+    codec_flags+=("$line")
+  done < <(build_codec_flags)
   configure_opts+=("${codec_flags[@]}")
   
   # Add extra flags if provided

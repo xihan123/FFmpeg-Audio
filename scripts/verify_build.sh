@@ -97,7 +97,11 @@ echo "9. Binary dependencies:"
 case "$(uname -s)" in
   Linux*)
     echo "  Linux dependencies:"
-    ldd "${FFMPEG}" | head -10
+    if ldd "${FFMPEG}" 2>&1 | grep -q "not a dynamic executable"; then
+      echo "  (Static build - no external dependencies)"
+    else
+      ldd "${FFMPEG}" | head -10
+    fi
     ;;
   Darwin*)
     echo "  macOS dependencies:"
