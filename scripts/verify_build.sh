@@ -97,19 +97,24 @@ echo "9. Binary dependencies:"
 case "$(uname -s)" in
   Linux*)
     echo "  Linux dependencies:"
-    if ldd "${FFMPEG}" 2>&1 | grep -q "not a dynamic executable"; then
-      echo "  (Static build - no external dependencies)"
+    ldd_output=$(ldd "${FFMPEG}" 2>&1)
+    if echo "${ldd_output}" | grep -q "not a dynamic executable"; then
+      echo "    ✓ Static build - no external dependencies"
     else
-      ldd "${FFMPEG}" | head -10
+      echo "${ldd_output}" | head -10 | sed 's/^/    /'
     fi
     ;;
   Darwin*)
     echo "  macOS dependencies:"
-    otool -L "${FFMPEG}" | head -10
+    otool -L "${FFMPEG}" | head -10 | sed 's/^/    /'
     ;;
   MINGW*|MSYS*|CYGWIN*)
     echo "  Windows dependencies:"
-    objdump -p "${FFMPEG}" | grep "DLL Name:" | head -10 || echo "  (Static build - no external DLLs)"
+    if dll_output=$(objdump -p "${FFMPEG}" 2>/dev/null | grep "DLL Name:" | head -10); then
+      echo "${dll_output}" | sed 's/^/    /'
+    else
+      echo "    ✓ Static build - no external DLLs"
+    fi
     ;;
 esac
 echo
