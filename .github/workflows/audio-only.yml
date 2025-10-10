@@ -10,6 +10,11 @@ on:
         description: "FFmpeg version to build"
         required: false
         default: "7.1.2"
+      skip_release:
+        description: "Skip creating release"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "0 3 * * *"
   repository_dispatch:
@@ -26,6 +31,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       should_build: ${{ steps.resolve.outputs.should_build }}
       reason: ${{ steps.resolve.outputs.reason }}
+      skip_release: ${{ steps.resolve.outputs.skip_release }}
     steps:
       - name: Resolve target version
         id: resolve
@@ -37,6 +43,7 @@ jobs:
           set -euo pipefail
 
           VERSION_INPUT="${{ github.event.inputs.ffmpeg_version || '' }}"
+          SKIP_RELEASE="${{ github.event.inputs.skip_release || 'false' }}"
           EVENT_NAME="${{ github.event_name }}"
           EVENT_ACTION="${{ github.event.action || '' }}"
           PAYLOAD_VERSION="${{ github.event.client_payload.version || '' }}"
@@ -58,8 +65,10 @@ jobs:
             SHOULD_BUILD="true"
             REASON="repository_dispatch"
           elif [[ "$EVENT_NAME" == "schedule" ]]; then
+            echo "Checking for new FFmpeg releases..."
             VERSION=$(curl -fsSL "https://api.github.com/repos/FFmpeg/FFmpeg/tags?per_page=1" | jq -r '.[0].name // empty')
             if [[ -n "$VERSION" ]]; then
+              echo "Latest upstream version: $VERSION"
               STATUS=$(curl -fsSL -o /tmp/release.json -w '%{http_code}' \
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H 'Accept: application/vnd.github+json' \
@@ -67,11 +76,14 @@ jobs:
               if [[ "$STATUS" == "404" ]]; then
                 SHOULD_BUILD="true"
                 REASON="auto-upstream"
+                echo "New version detected, will build"
               else
                 REASON="already-built"
+                echo "Version already built, skipping"
               fi
             else
               REASON="no-upstream-tag"
+              echo "Could not fetch upstream tags"
             fi
           fi
 
@@ -83,6 +95,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          echo "skip_release=$SKIP_RELEASE" >> "$GITHUB_OUTPUT"
+          
+          echo "Final decision: version=$VERSION, should_build=$SHOULD_BUILD, reason=$REASON"
 
   build:
     needs: prepare
@@ -93,27 +108,29 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x64
-            setup: |
-              sudo apt-get update
-              sudo apt-get install -y build-essential pkg-config yasm nasm curl zip
           - os: macos-latest
             platform: macos-x64
-            setup: |
-              brew update
-              brew install pkg-config nasm yasm gnu-tar
           - os: windows-latest
             platform: windows-x64
-            setup: |
-              pacman -S --needed --noconfirm base-devel git zip curl \
-                mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config \
-                mingw-w64-x86_64-nasm mingw-w64-x86_64-yasm
     runs-on: ${{ matrix.os }}
     env:
       FFMPEG_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSYS2
+      - name: Setup build environment (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config yasm nasm curl zip
+
+      - name: Setup build environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install pkg-config nasm yasm gnu-tar
+
+      - name: Setup MSYS2 (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
@@ -130,16 +147,7 @@ jobs:
             mingw-w64-x86_64-yasm
           path-type: inherit
 
-      - name: Install build dependencies
-        if: runner.os != 'Windows'
-        run: ${{ matrix.setup }}
-
-      - name: Verify Windows dependencies
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: ${{ matrix.setup }}
-
-      - name: Build audio-only FFmpeg
+      - name: Build audio-only FFmpeg (Unix)
         if: runner.os != 'Windows'
         run: bash scripts/build_ffmpeg_audio.sh
 
@@ -148,11 +156,20 @@ jobs:
         shell: msys2 {0}
         run: bash scripts/build_ffmpeg_audio.sh
 
+      - name: Verify build (Unix)
+        if: runner.os != 'Windows'
+        run: bash scripts/verify_build.sh install
+
+      - name: Verify build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/verify_build.sh install
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-audio-only-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}
-          path: artifacts
+          path: artifacts/*
           if-no-files-found: error
           retention-days: 7
 
@@ -160,8 +177,12 @@ jobs:
     needs:
       - prepare
       - build
-    if: needs.prepare.outputs.should_build == 'true'
+    if: |
+      needs.prepare.outputs.should_build == 'true' && 
+      needs.prepare.outputs.skip_release != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -173,6 +194,7 @@ jobs:
           set -euo pipefail
           mkdir -p upload
           find release -maxdepth 4 -type f -print0 | xargs -0 -I {} mv {} upload/
+          ls -lh upload/
 
       - name: Create or update release
         uses: ncipollo/release-action@v1
@@ -185,6 +207,32 @@ jobs:
           artifacts: upload/*
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            Automated audio-only FFmpeg build for `${{ needs.prepare.outputs.version }}`.
-
-            Trigger reason: `${{ needs.prepare.outputs.reason }}`.
+            ## FFmpeg Audio Only Build
+            
+            **Version:** `${{ needs.prepare.outputs.version }}`  
+            **Trigger:** `${{ needs.prepare.outputs.reason }}`
+            
+            ### Supported Audio Codecs
+            - **Decoders:** AAC, AC3, FLAC, MP3, Opus, Vorbis, PCM variants
+            - **Encoders:** AAC, AC3, FLAC, PCM variants
+            
+            ### Platforms
+            - Linux x86_64
+            - macOS x86_64
+            - Windows x86_64
+            
+            ### Usage
+            ```bash
+            # Extract archive
+            tar xzf ffmpeg-audio-only-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+            cd bin
+            
+            # Convert audio
+            ./ffmpeg -i input.wav -c:a aac -b:a 192k output.m4a
+            
+            # Probe audio file
+            ./ffprobe input.mp3
+            ```
+            
+            ### SHA256 Checksums
+            See `.sha256` files for verification.

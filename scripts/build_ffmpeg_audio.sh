@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Source configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/audio_config.sh"
+
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.2}"
 WORKDIR="${WORKDIR:-$PWD}"
 SRC_DIR="${WORKDIR}/ffmpeg-${FFMPEG_VERSION}"
@@ -9,6 +13,12 @@ ARTIFACT_DIR="${WORKDIR}/artifacts"
 CONFIGURE_FLAGS_EXTRA=${CONFIGURE_FLAGS_EXTRA:-}
 DOWNLOAD_RETRIES=${DOWNLOAD_RETRIES:-5}
 DOWNLOAD_TIMEOUT=${DOWNLOAD_TIMEOUT:-30}
+
+# Logging functions
+log_info() { echo "[INFO] $*" >&2; }
+log_error() { echo "[ERROR] $*" >&2; }
+log_success() { echo "[SUCCESS] $*" >&2; }
+
 CURL_OPTS=(
   --fail
   --location
@@ -17,151 +27,210 @@ CURL_OPTS=(
   --retry-delay 5
   --connect-timeout "${DOWNLOAD_TIMEOUT}"
   --max-time $((DOWNLOAD_TIMEOUT * (DOWNLOAD_RETRIES + 1)))
+  --progress-bar
 )
 
-OS_NAME=$(uname -s)
-case "$OS_NAME" in
-  Linux*)
-    PLATFORM_TAG="linux-x64"
-    MAKE_JOBS=${MAKE_JOBS:-$(nproc)}
-    ARCHIVE_FORMAT="tar.gz"
-    ARCHIVE_CMD=(tar -C "${INSTALL_DIR}" -czf)
-    CHECKSUM_CMD=(sha256sum)
-    ;;
-  Darwin*)
-    PLATFORM_TAG="macos-x64"
-    MAKE_JOBS=${MAKE_JOBS:-$(sysctl -n hw.ncpu)}
-    ARCHIVE_FORMAT="tar.gz"
-    ARCHIVE_CMD=(tar -C "${INSTALL_DIR}" -czf)
-    CHECKSUM_CMD=(shasum -a 256)
-    ;;
-  MINGW*|MSYS*|CYGWIN*)
-    PLATFORM_TAG="windows-x64"
-    MAKE_JOBS=${MAKE_JOBS:-${NUMBER_OF_PROCESSORS:-1}}
-    ARCHIVE_FORMAT="zip"
-    ARCHIVE_CMD=(zip -r)
-    CHECKSUM_CMD=(sha256sum)
-    ;;
-  *)
-    echo "Unsupported platform: ${OS_NAME}" >&2
-    exit 1
-    ;;
-esac
+# Platform detection
+detect_platform() {
+  local os_name
+  os_name=$(uname -s)
+  
+  case "$os_name" in
+    Linux*)
+      echo "PLATFORM_TAG=linux-x64"
+      echo "MAKE_JOBS=${MAKE_JOBS:-$(nproc)}"
+      echo "ARCHIVE_FORMAT=tar.gz"
+      echo "ARCHIVE_EXT=tar.gz"
+      ;;
+    Darwin*)
+      echo "PLATFORM_TAG=macos-x64"
+      echo "MAKE_JOBS=${MAKE_JOBS:-$(sysctl -n hw.ncpu)}"
+      echo "ARCHIVE_FORMAT=tar.gz"
+      echo "ARCHIVE_EXT=tar.gz"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      echo "PLATFORM_TAG=windows-x64"
+      echo "MAKE_JOBS=${MAKE_JOBS:-${NUMBER_OF_PROCESSORS:-1}}"
+      echo "ARCHIVE_FORMAT=zip"
+      echo "ARCHIVE_EXT=zip"
+      ;;
+    *)
+      log_error "Unsupported platform: ${os_name}"
+      exit 1
+      ;;
+  esac
+}
 
-rm -rf "${SRC_DIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
-mkdir -p "${WORKDIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
+# Load platform variables
+eval "$(detect_platform)"
 
-ARCHIVE_PATH="${WORKDIR}/ffmpeg-src"
-rm -f "${ARCHIVE_PATH}.tar.xz" "${ARCHIVE_PATH}.tar.gz"
+log_info "Building for platform: ${PLATFORM_TAG}"
+log_info "Using ${MAKE_JOBS} parallel jobs"
 
-download_sources=(
-  "tar.xz|https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
-  "tar.xz|https://download.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
-  "tar.gz|https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz"
-)
+# Cleanup
+cleanup_dirs() {
+  log_info "Cleaning up previous build artifacts..."
+  rm -rf "${SRC_DIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
+  mkdir -p "${WORKDIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
+}
 
-ARCHIVE_EXT=""
-ARCHIVE_FILE=""
-DOWNLOAD_SUCCESS="false"
-
-for entry in "${download_sources[@]}"; do
-  IFS='|' read -r ext url <<<"${entry}"
-  ARCHIVE_FILE="${ARCHIVE_PATH}.${ext}"
-  echo "Attempting download: ${url}" >&2
-  if curl "${CURL_OPTS[@]}" -o "${ARCHIVE_FILE}" "${url}"; then
-    ARCHIVE_EXT="${ext}"
-    DOWNLOAD_SUCCESS="true"
-    break
-  else
-    echo "Download failed for ${url}, trying next mirror..." >&2
-  fi
-done
-
-if [[ "${DOWNLOAD_SUCCESS}" != "true" ]]; then
-  echo "Failed to download FFmpeg ${FFMPEG_VERSION} from all mirrors." >&2
-  exit 1
-fi
-
-case "${ARCHIVE_EXT}" in
-  tar.xz)
-    tar -xf "${ARCHIVE_FILE}" -C "${WORKDIR}"
-    ;;
-  tar.gz)
-    tar -xzf "${ARCHIVE_FILE}" -C "${WORKDIR}"
-    # GitHub archive name differs, adjust source directory
-    SRC_DIR="${WORKDIR}/FFmpeg-n${FFMPEG_VERSION}"
-    ;;
-  *)
-    echo "Unsupported archive extension: ${ARCHIVE_EXT}" >&2
-    exit 1
-    ;;
-esac
-
-pushd "${SRC_DIR}" >/dev/null
-
-CONFIGURE_OPTS=(
-  "--prefix=${INSTALL_DIR}"
-  --disable-debug
-  --disable-doc
-  --enable-ffmpeg
-  --enable-ffprobe
-  --disable-ffplay
-  --disable-avdevice
-  --disable-swscale
-  --disable-network
-  --disable-everything
-  --enable-swresample
-  --enable-avfilter
-  --enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume
-  --enable-protocol=file,pipe,concat,data
-  --enable-demuxer=aac,ac3,flac,matroska,mp3,ogg,wav,opus,aiff,pcm_s16le,pcm_s24le,mov,mp4,m4a,3gp,3g2
-  --enable-muxer=adts,flac,matroska,mp3,ogg,wav,aiff,opus,mp4,mov
-  --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis
-  --enable-decoder=aac,ac3,flac,mp3,opus,vorbis,pcm_alaw,pcm_f32le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
-  --enable-encoder=aac,ac3_fixed,flac,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
-  --enable-bsf=aac_adtstoasc
-)
-
-if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
-  CONFIGURE_OPTS+=(
-    --target-os=mingw32
-    --arch=x86_64
-    --enable-cross-compile
-    --pkg-config=pkg-config
+# Download source
+download_ffmpeg_source() {
+  local archive_path="${WORKDIR}/ffmpeg-src"
+  rm -f "${archive_path}.tar.xz" "${archive_path}.tar.gz"
+  
+  local download_sources=(
+    "tar.xz|https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+    "tar.xz|https://download.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+    "tar.gz|https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz"
   )
-fi
-
-if [[ -n "${CONFIGURE_FLAGS_EXTRA}" ]]; then
-  # shellcheck disable=SC2206
-  EXTRA_FLAGS=(${CONFIGURE_FLAGS_EXTRA})
-  CONFIGURE_OPTS+=("${EXTRA_FLAGS[@]}")
-fi
-
-./configure "${CONFIGURE_OPTS[@]}"
-
-make -j"${MAKE_JOBS}"
-make install
-
-popd >/dev/null
-
-ARTIFACT_BASENAME="ffmpeg-audio-only-${FFMPEG_VERSION}-${PLATFORM_TAG}"
-OUTPUT_PATH="${ARTIFACT_DIR}/${ARTIFACT_BASENAME}.${ARCHIVE_FORMAT}"
-
-case "${ARCHIVE_FORMAT}" in
-  tar.gz)
-    "${ARCHIVE_CMD[@]}" "${OUTPUT_PATH}" .
-    ;;
-  zip)
-    pushd "${INSTALL_DIR}" >/dev/null
-    "${ARCHIVE_CMD[@]}" "${OUTPUT_PATH}" .
-    popd >/dev/null
-    ;;
-  *)
-    echo "Unsupported archive format: ${ARCHIVE_FORMAT}" >&2
+  
+  local archive_ext=""
+  local archive_file=""
+  local download_success="false"
+  
+  for entry in "${download_sources[@]}"; do
+    IFS='|' read -r ext url <<<"${entry}"
+    archive_file="${archive_path}.${ext}"
+    log_info "Attempting download: ${url}"
+    
+    if curl "${CURL_OPTS[@]}" -o "${archive_file}" "${url}"; then
+      archive_ext="${ext}"
+      download_success="true"
+      log_success "Downloaded from ${url}"
+      break
+    else
+      log_error "Download failed for ${url}, trying next mirror..."
+    fi
+  done
+  
+  if [[ "${download_success}" != "true" ]]; then
+    log_error "Failed to download FFmpeg ${FFMPEG_VERSION} from all mirrors."
     exit 1
-    ;;
-esac
+  fi
+  
+  log_info "Extracting source archive..."
+  case "${archive_ext}" in
+    tar.xz)
+      tar -xf "${archive_file}" -C "${WORKDIR}"
+      ;;
+    tar.gz)
+      tar -xzf "${archive_file}" -C "${WORKDIR}"
+      SRC_DIR="${WORKDIR}/FFmpeg-n${FFMPEG_VERSION}"
+      ;;
+    *)
+      log_error "Unsupported archive extension: ${archive_ext}"
+      exit 1
+      ;;
+  esac
+  
+  log_success "Source extracted to ${SRC_DIR}"
+}
 
-"${CHECKSUM_CMD[@]}" "${OUTPUT_PATH}" > "${OUTPUT_PATH}.sha256"
+# Configure and build
+build_ffmpeg() {
+  pushd "${SRC_DIR}" >/dev/null
+  
+  log_info "Configuring FFmpeg with audio-only settings..."
+  
+  # Base configuration
+  local configure_opts=(
+    "--prefix=${INSTALL_DIR}"
+    --disable-debug
+    --disable-doc
+    --enable-ffmpeg
+    --enable-ffprobe
+    --disable-ffplay
+    --disable-avdevice
+    --disable-swscale
+    --disable-network
+    --disable-everything
+    --enable-swresample
+    --enable-avfilter
+  )
+  
+  # Add platform-specific options
+  if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
+    configure_opts+=(
+      --target-os=mingw32
+      --arch=x86_64
+      --enable-cross-compile
+      --pkg-config=pkg-config
+    )
+  fi
+  
+  # Add codec flags from configuration
+  mapfile -t codec_flags < <(build_codec_flags)
+  configure_opts+=("${codec_flags[@]}")
+  
+  # Add extra flags if provided
+  if [[ -n "${CONFIGURE_FLAGS_EXTRA}" ]]; then
+    # shellcheck disable=SC2206
+    local extra_flags=(${CONFIGURE_FLAGS_EXTRA})
+    configure_opts+=("${extra_flags[@]}")
+  fi
+  
+  ./configure "${configure_opts[@]}"
+  
+  log_info "Building FFmpeg (using ${MAKE_JOBS} jobs)..."
+  make -j"${MAKE_JOBS}"
+  
+  log_info "Installing FFmpeg..."
+  make install
+  
+  popd >/dev/null
+  log_success "FFmpeg build completed"
+}
 
-echo "Artifacts generated at ${ARTIFACT_DIR}: ${ARTIFACT_BASENAME}.${ARCHIVE_FORMAT}"
+# Create archive
+create_archive() {
+  local artifact_basename="ffmpeg-audio-only-${FFMPEG_VERSION}-${PLATFORM_TAG}"
+  local output_path="${ARTIFACT_DIR}/${artifact_basename}.${ARCHIVE_FORMAT}"
+  
+  log_info "Creating ${ARCHIVE_FORMAT} archive..."
+  
+  case "${ARCHIVE_FORMAT}" in
+    tar.gz)
+      tar -C "${INSTALL_DIR}" -czf "${output_path}" .
+      ;;
+    zip)
+      pushd "${INSTALL_DIR}" >/dev/null
+      zip -r "${output_path}" .
+      popd >/dev/null
+      ;;
+    *)
+      log_error "Unsupported archive format: ${ARCHIVE_FORMAT}"
+      exit 1
+      ;;
+  esac
+  
+  log_info "Generating SHA256 checksum..."
+  case "${PLATFORM_TAG}" in
+    *darwin*|*macos*)
+      shasum -a 256 "${output_path}" > "${output_path}.sha256"
+      ;;
+    *)
+      sha256sum "${output_path}" > "${output_path}.sha256"
+      ;;
+  esac
+  
+  log_success "Artifacts generated at ${ARTIFACT_DIR}:"
+  log_success "  - ${artifact_basename}.${ARCHIVE_FORMAT}"
+  log_success "  - ${artifact_basename}.${ARCHIVE_FORMAT}.sha256"
+}
+
+# Main execution
+main() {
+  log_info "Starting FFmpeg audio-only build"
+  log_info "Version: ${FFMPEG_VERSION}"
+  log_info "Platform: ${PLATFORM_TAG}"
+  
+  cleanup_dirs
+  download_ffmpeg_source
+  build_ffmpeg
+  create_archive
+  
+  log_success "Build process completed successfully!"
+}
+
+main "$@"
