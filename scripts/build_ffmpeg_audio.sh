@@ -113,13 +113,13 @@ CONFIGURE_OPTS=(
   --disable-everything
   --enable-swresample
   --enable-avfilter
-  --enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume
-  --enable-protocol=file,pipe,concat
-  --enable-demuxer=aac,ac3,flac,matroska,mp3,ogg,wav,opus
-  --enable-muxer=adts,flac,matroska,mp3,ogg,wav
-  --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis
-  --enable-decoder=aac,ac3,flac,mp3,opus,vorbis,pcm_alaw,pcm_f32le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
-  --enable-encoder=aac,ac3_fixed,flac,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
+  # --enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume
+  # --enable-protocol=file,pipe,concat
+  # --enable-demuxer=aac,ac3,flac,matroska,mp3,ogg,wav,opus
+  # --enable-muxer=adts,flac,matroska,mp3,ogg,wav
+  # --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis
+  # --enable-decoder=aac,ac3,flac,mp3,opus,vorbis,pcm_alaw,pcm_f32le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
+  # --enable-encoder=aac,ac3_fixed,flac,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
 )
 
 if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
