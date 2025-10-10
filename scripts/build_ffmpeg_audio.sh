@@ -41,18 +41,21 @@ detect_platform() {
       echo "MAKE_JOBS=${MAKE_JOBS:-$(nproc)}"
       echo "ARCHIVE_FORMAT=tar.gz"
       echo "ARCHIVE_EXT=tar.gz"
+      echo "ENABLE_STATIC=yes"
       ;;
     Darwin*)
       echo "PLATFORM_TAG=macos-x64"
       echo "MAKE_JOBS=${MAKE_JOBS:-$(sysctl -n hw.ncpu)}"
       echo "ARCHIVE_FORMAT=tar.gz"
       echo "ARCHIVE_EXT=tar.gz"
+      echo "ENABLE_STATIC=yes"
       ;;
     MINGW*|MSYS*|CYGWIN*)
       echo "PLATFORM_TAG=windows-x64"
       echo "MAKE_JOBS=${MAKE_JOBS:-${NUMBER_OF_PROCESSORS:-1}}"
       echo "ARCHIVE_FORMAT=zip"
       echo "ARCHIVE_EXT=zip"
+      echo "ENABLE_STATIC=yes"
       ;;
     *)
       log_error "Unsupported platform: ${os_name}"
@@ -149,15 +152,40 @@ build_ffmpeg() {
     --enable-avfilter
   )
   
-  # Add platform-specific options
-  if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
+  # Static linking configuration
+  if [[ "${ENABLE_STATIC}" == "yes" ]]; then
     configure_opts+=(
-      --target-os=mingw32
-      --arch=x86_64
-      --enable-cross-compile
-      --pkg-config=pkg-config
+      --enable-static
+      --disable-shared
+      --pkg-config-flags="--static"
     )
+    log_info "Enabling static linking"
   fi
+  
+  # Add platform-specific options
+  case "${PLATFORM_TAG}" in
+    windows-x64)
+      configure_opts+=(
+        --target-os=mingw32
+        --arch=x86_64
+        --enable-cross-compile
+        --pkg-config=pkg-config
+        --extra-cflags="-static"
+        --extra-ldflags="-static"
+      )
+      ;;
+    linux-x64)
+      configure_opts+=(
+        --extra-ldexeflags="-static"
+      )
+      ;;
+    macos-x64)
+      # macOS 不完全支持静态链接，但我们可以最小化动态依赖
+      configure_opts+=(
+        --extra-ldflags="-Wl,-dead_strip"
+      )
+      ;;
+  esac
   
   # Add codec flags from configuration
   mapfile -t codec_flags < <(build_codec_flags)
@@ -170,6 +198,9 @@ build_ffmpeg() {
     configure_opts+=("${extra_flags[@]}")
   fi
   
+  log_info "Configure options:"
+  printf '%s\n' "${configure_opts[@]}" | sed 's/^/  /'
+  
   ./configure "${configure_opts[@]}"
   
   log_info "Building FFmpeg (using ${MAKE_JOBS} jobs)..."
@@ -178,23 +209,133 @@ build_ffmpeg() {
   log_info "Installing FFmpeg..."
   make install
   
+  # Strip binaries to reduce size
+  if command -v strip &>/dev/null; then
+    log_info "Stripping binaries..."
+    if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
+      strip "${INSTALL_DIR}/bin/ffmpeg.exe" || true
+      strip "${INSTALL_DIR}/bin/ffprobe.exe" || true
+    else
+      strip "${INSTALL_DIR}/bin/ffmpeg" || true
+      strip "${INSTALL_DIR}/bin/ffprobe" || true
+    fi
+  fi
+  
   popd >/dev/null
   log_success "FFmpeg build completed"
 }
 
-# Create archive
+# Verify binaries
+verify_binaries() {
+  log_info "Verifying built binaries..."
+  
+  local ffmpeg_bin="${INSTALL_DIR}/bin/ffmpeg"
+  local ffprobe_bin="${INSTALL_DIR}/bin/ffprobe"
+  
+  if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
+    ffmpeg_bin="${ffmpeg_bin}.exe"
+    ffprobe_bin="${ffprobe_bin}.exe"
+  fi
+  
+  if [[ ! -f "${ffmpeg_bin}" ]]; then
+    log_error "ffmpeg binary not found at ${ffmpeg_bin}"
+    exit 1
+  fi
+  
+  if [[ ! -f "${ffprobe_bin}" ]]; then
+    log_error "ffprobe binary not found at ${ffprobe_bin}"
+    exit 1
+  fi
+  
+  log_info "Testing ffmpeg binary..."
+  if "${ffmpeg_bin}" -version >/dev/null 2>&1; then
+    log_success "ffmpeg binary works"
+  else
+    log_error "ffmpeg binary failed to execute"
+    # Show dependencies for debugging
+    case "${PLATFORM_TAG}" in
+      linux-x64)
+        ldd "${ffmpeg_bin}" || true
+        ;;
+      macos-x64)
+        otool -L "${ffmpeg_bin}" || true
+        ;;
+      windows-x64)
+        # Windows 下显示 DLL 依赖（如果有 objdump）
+        objdump -p "${ffmpeg_bin}" | grep "DLL Name:" || true
+        ;;
+    esac
+    exit 1
+  fi
+  
+  log_info "Testing ffprobe binary..."
+  if "${ffprobe_bin}" -version >/dev/null 2>&1; then
+    log_success "ffprobe binary works"
+  else
+    log_error "ffprobe binary failed to execute"
+    exit 1
+  fi
+  
+  # Display binary info
+  log_info "Binary information:"
+  log_info "  ffmpeg size: $(du -h "${ffmpeg_bin}" | cut -f1)"
+  log_info "  ffprobe size: $(du -h "${ffprobe_bin}" | cut -f1)"
+}
+
+# Create archive with proper structure
 create_archive() {
   local artifact_basename="ffmpeg-audio-only-${FFMPEG_VERSION}-${PLATFORM_TAG}"
   local output_path="${ARTIFACT_DIR}/${artifact_basename}.${ARCHIVE_FORMAT}"
+  local temp_dir="${WORKDIR}/package"
+  
+  log_info "Preparing package structure..."
+  rm -rf "${temp_dir}"
+  mkdir -p "${temp_dir}/bin"
+  
+  # Copy binaries
+  if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then
+    cp "${INSTALL_DIR}/bin/ffmpeg.exe" "${temp_dir}/bin/"
+    cp "${INSTALL_DIR}/bin/ffprobe.exe" "${temp_dir}/bin/"
+  else
+    cp "${INSTALL_DIR}/bin/ffmpeg" "${temp_dir}/bin/"
+    cp "${INSTALL_DIR}/bin/ffprobe" "${temp_dir}/bin/"
+  fi
+  
+  # Create README
+  cat > "${temp_dir}/README.txt" <<'EOF'
+FFmpeg Audio-Only Build
+=======================
+
+This is a minimal FFmpeg build containing only audio processing capabilities.
+
+Contents:
+- bin/ffmpeg   : Audio transcoding tool
+- bin/ffprobe  : Audio analysis tool
+
+Usage Examples:
+  # Convert WAV to AAC
+  ./bin/ffmpeg -i input.wav -c:a aac -b:a 192k output.m4a
+  
+  # Convert MP3 to FLAC
+  ./bin/ffmpeg -i input.mp3 output.flac
+  
+  # Probe audio file
+  ./bin/ffprobe input.mp3
+  
+  # Adjust volume
+  ./bin/ffmpeg -i input.mp3 -af "volume=1.5" output.mp3
+
+For more information, visit: https://ffmpeg.org/documentation.html
+EOF
   
   log_info "Creating ${ARCHIVE_FORMAT} archive..."
   
   case "${ARCHIVE_FORMAT}" in
     tar.gz)
-      tar -C "${INSTALL_DIR}" -czf "${output_path}" .
+      tar -C "${temp_dir}" -czf "${output_path}" .
       ;;
     zip)
-      pushd "${INSTALL_DIR}" >/dev/null
+      pushd "${temp_dir}" >/dev/null
       zip -r "${output_path}" .
       popd >/dev/null
       ;;
@@ -207,12 +348,15 @@ create_archive() {
   log_info "Generating SHA256 checksum..."
   case "${PLATFORM_TAG}" in
     *darwin*|*macos*)
-      shasum -a 256 "${output_path}" > "${output_path}.sha256"
+      shasum -a 256 "${output_path}" | tee "${output_path}.sha256"
       ;;
     *)
-      sha256sum "${output_path}" > "${output_path}.sha256"
+      sha256sum "${output_path}" | tee "${output_path}.sha256"
       ;;
   esac
+  
+  # Cleanup temp directory
+  rm -rf "${temp_dir}"
   
   log_success "Artifacts generated at ${ARTIFACT_DIR}:"
   log_success "  - ${artifact_basename}.${ARCHIVE_FORMAT}"
@@ -228,6 +372,7 @@ main() {
   cleanup_dirs
   download_ffmpeg_source
   build_ffmpeg
+  verify_binaries
   create_archive
   
   log_success "Build process completed successfully!"
