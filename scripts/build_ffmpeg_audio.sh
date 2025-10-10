@@ -103,7 +103,6 @@ CONFIGURE_OPTS=(
   "--prefix=${INSTALL_DIR}"
   --disable-debug
   --disable-doc
-  --disable-programs
   --enable-ffmpeg
   --enable-ffprobe
   --disable-ffplay
@@ -113,13 +112,14 @@ CONFIGURE_OPTS=(
   --disable-everything
   --enable-swresample
   --enable-avfilter
-  # --enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume
-  # --enable-protocol=file,pipe,concat
-  # --enable-demuxer=aac,ac3,flac,matroska,mp3,ogg,wav,opus
-  # --enable-muxer=adts,flac,matroska,mp3,ogg,wav
-  # --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis
-  # --enable-decoder=aac,ac3,flac,mp3,opus,vorbis,pcm_alaw,pcm_f32le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
-  # --enable-encoder=aac,ac3_fixed,flac,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
+  --enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume
+  --enable-protocol=file,pipe,concat,data
+  --enable-demuxer=aac,ac3,flac,matroska,mp3,ogg,wav,opus,aiff,pcm_s16le,pcm_s24le,mov,mp4,m4a,3gp,3g2
+  --enable-muxer=adts,flac,matroska,mp3,ogg,wav,aiff,opus,mp4,mov
+  --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis
+  --enable-decoder=aac,ac3,flac,mp3,opus,vorbis,pcm_alaw,pcm_f32le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
+  --enable-encoder=aac,ac3_fixed,flac,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8
+  --enable-bsf=aac_adtstoasc
 )
 
 if [[ "${PLATFORM_TAG}" == "windows-x64" ]]; then

@@ -55,11 +55,28 @@ bash scripts/build_ffmpeg_audio.sh
 - `--enable-ffmpeg --enable-ffprobe`：仅保留核心 CLI 工具，仍可使用 `ffmpeg -h`、`ffprobe -h` 获取帮助信息
 - `--enable-swresample`：保留音频重采样能力
 - `--enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume`
-- `--enable-demuxer=...` / `--enable-muxer=...`：启用常见音频封装
-- `--enable-decoder=...` / `--enable-encoder=...`：启用音频编解码
+- `--enable-demuxer` / `--enable-muxer`：白名单覆盖常见音频容器（WAV、OGG、Matroska、MP4/M4A、ADTS、AIFF 等）
+- `--enable-decoder` / `--enable-encoder`：启用 AAC、AC3、FLAC、PCM 系列等音频编解码器
 - 关闭 `avdevice`, `swscale`, `network` 等与视频或网络相关的模块
 
 可根据实际需求调整脚本中的启用/禁用列表，然后重新触发工作流。
+
+### 结果验证
+
+构建完成后，可通过以下命令确认核心功能：
+
+```bash
+./ffmpeg -hide_banner -codecs | grep -E "(A\.|DEA)"
+./ffmpeg -hide_banner -formats | grep -E "( D | E )"
+./ffmpeg -hide_banner -filters | grep audio
+```
+
+将一个 WAV 转码为 AAC M4A 并回放，确保读写链路正常：
+
+```bash
+./ffmpeg -hide_banner -i sample.wav -c:a aac -b:a 192k output.m4a
+./ffprobe -hide_banner output.m4a
+```
 
 ## 后续改进建议
 
