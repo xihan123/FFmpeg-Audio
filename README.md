@@ -27,6 +27,8 @@
 
 > **产物命名**：`ffmpeg-audio-only-<版本>-<平台>.tar.gz|zip` 与对应 `.sha256`
 
+构建脚本会依次尝试 `ffmpeg.org`、`download.ffmpeg.org` 与 GitHub 镜像下载源码，并开启 `curl` 自动重试，减少临时网络抖动带来的失败率。
+
 ### 手动运行
 
 在 GitHub 仓库界面选择 **Actions → Build FFmpeg Audio Only → Run workflow**，可自定义 FFmpeg 版本号。

@@ -9,7 +9,7 @@ on:
       ffmpeg_version:
         description: "FFmpeg version to build"
         required: false
-        default: "6.1.1"
+        default: "7.1.2"
   schedule:
     - cron: "0 3 * * *"
   repository_dispatch:
@@ -17,7 +17,7 @@ on:
       - ffmpeg-upstream-tag
 
 env:
-  DEFAULT_FFMPEG_VERSION: "6.1.1"
+  DEFAULT_FFMPEG_VERSION: "7.1.2"
 
 jobs:
   prepare:

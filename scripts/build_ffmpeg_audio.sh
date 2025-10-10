@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FFMPEG_VERSION="${FFMPEG_VERSION:-6.1.1}"
-SOURCE_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.2}"
 WORKDIR="${WORKDIR:-$PWD}"
 SRC_DIR="${WORKDIR}/ffmpeg-${FFMPEG_VERSION}"
 INSTALL_DIR="${WORKDIR}/install"
 ARTIFACT_DIR="${WORKDIR}/artifacts"
 CONFIGURE_FLAGS_EXTRA=${CONFIGURE_FLAGS_EXTRA:-}
+DOWNLOAD_RETRIES=${DOWNLOAD_RETRIES:-5}
+DOWNLOAD_TIMEOUT=${DOWNLOAD_TIMEOUT:-30}
+CURL_OPTS=(
+  --fail
+  --location
+  --retry "${DOWNLOAD_RETRIES}"
+  --retry-all-errors
+  --retry-delay 5
+  --connect-timeout "${DOWNLOAD_TIMEOUT}"
+  --max-time $((DOWNLOAD_TIMEOUT * (DOWNLOAD_RETRIES + 1)))
+)
 
 OS_NAME=$(uname -s)
 case "$OS_NAME" in
@@ -41,8 +51,51 @@ esac
 rm -rf "${SRC_DIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
 mkdir -p "${WORKDIR}" "${INSTALL_DIR}" "${ARTIFACT_DIR}"
 
-curl -fsSL -o "${WORKDIR}/ffmpeg.tar.xz" "${SOURCE_URL}"
-tar -xf "${WORKDIR}/ffmpeg.tar.xz" -C "${WORKDIR}"
+ARCHIVE_PATH="${WORKDIR}/ffmpeg-src"
+rm -f "${ARCHIVE_PATH}.tar.xz" "${ARCHIVE_PATH}.tar.gz"
+
+download_sources=(
+  "tar.xz|https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+  "tar.xz|https://download.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+  "tar.gz|https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_VERSION}.tar.gz"
+)
+
+ARCHIVE_EXT=""
+ARCHIVE_FILE=""
+DOWNLOAD_SUCCESS="false"
+
+for entry in "${download_sources[@]}"; do
+  IFS='|' read -r ext url <<<"${entry}"
+  ARCHIVE_FILE="${ARCHIVE_PATH}.${ext}"
+  echo "Attempting download: ${url}" >&2
+  if curl "${CURL_OPTS[@]}" -o "${ARCHIVE_FILE}" "${url}"; then
+    ARCHIVE_EXT="${ext}"
+    DOWNLOAD_SUCCESS="true"
+    break
+  else
+    echo "Download failed for ${url}, trying next mirror..." >&2
+  fi
+done
+
+if [[ "${DOWNLOAD_SUCCESS}" != "true" ]]; then
+  echo "Failed to download FFmpeg ${FFMPEG_VERSION} from all mirrors." >&2
+  exit 1
+fi
+
+case "${ARCHIVE_EXT}" in
+  tar.xz)
+    tar -xf "${ARCHIVE_FILE}" -C "${WORKDIR}"
+    ;;
+  tar.gz)
+    tar -xzf "${ARCHIVE_FILE}" -C "${WORKDIR}"
+    # GitHub archive name differs, adjust source directory
+    SRC_DIR="${WORKDIR}/FFmpeg-n${FFMPEG_VERSION}"
+    ;;
+  *)
+    echo "Unsupported archive extension: ${ARCHIVE_EXT}" >&2
+    exit 1
+    ;;
+esac
 
 pushd "${SRC_DIR}" >/dev/null
 
