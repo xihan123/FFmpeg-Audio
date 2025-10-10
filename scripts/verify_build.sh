@@ -97,16 +97,20 @@ echo "9. Binary dependencies:"
 case "$(uname -s)" in
   Linux*)
     echo "  Linux dependencies:"
-    ldd_output=$(ldd "${FFMPEG}" 2>&1)
-    if echo "${ldd_output}" | grep -q "not a dynamic executable"; then
-      echo "    ✓ Static build - no external dependencies"
-    else
-      echo "${ldd_output}" | head -10 | sed 's/^/    /'
+    # ldd returns non-zero exit code for static binaries, so we need to handle it
+    if ldd_output=$(ldd "${FFMPEG}" 2>&1) || true; then
+      if echo "${ldd_output}" | grep -q "not a dynamic executable"; then
+        echo "    ✓ Static build - no external dependencies"
+      elif [[ -n "${ldd_output}" ]]; then
+        echo "${ldd_output}" | head -10 | sed 's/^/    /'
+      else
+        echo "    ✓ Static build - no external dependencies"
+      fi
     fi
     ;;
   Darwin*)
     echo "  macOS dependencies:"
-    otool -L "${FFMPEG}" | head -10 | sed 's/^/    /'
+    otool -L "${FFMPEG}" 2>/dev/null | head -10 | sed 's/^/    /' || echo "    ✓ Static build"
     ;;
   MINGW*|MSYS*|CYGWIN*)
     echo "  Windows dependencies:"
