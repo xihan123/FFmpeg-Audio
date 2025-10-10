@@ -103,14 +103,12 @@ CONFIGURE_OPTS=(
   "--prefix=${INSTALL_DIR}"
   --disable-debug
   --disable-doc
-  --enable-small
   --disable-programs
   --enable-ffmpeg
   --enable-ffprobe
   --disable-ffplay
   --disable-avdevice
   --disable-swscale
-  --disable-postproc
   --disable-network
   --disable-everything
   --enable-swresample

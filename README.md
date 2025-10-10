@@ -52,12 +52,12 @@ bash scripts/build_ffmpeg_audio.sh
 `build_ffmpeg_audio.sh` 中使用了如下 `./configure` 选项：
 
 - `--disable-everything`：关闭所有解码器/编码器/复用器等，再按需启用音频组件
-- `--enable-ffmpeg --enable-ffprobe`：仅保留核心 CLI 工具
+- `--enable-ffmpeg --enable-ffprobe`：仅保留核心 CLI 工具，仍可使用 `ffmpeg -h`、`ffprobe -h` 获取帮助信息
 - `--enable-swresample`：保留音频重采样能力
 - `--enable-filter=aformat,anull,aresample,asetpts,atempo,channelmap,channelsplit,loudnorm,pan,volume`
 - `--enable-demuxer=...` / `--enable-muxer=...`：启用常见音频封装
 - `--enable-decoder=...` / `--enable-encoder=...`：启用音频编解码
-- 关闭 `avdevice`, `swscale`, `postproc`, `network` 等与视频或网络相关的模块
+- 关闭 `avdevice`, `swscale`, `network` 等与视频或网络相关的模块
 
 可根据实际需求调整脚本中的启用/禁用列表，然后重新触发工作流。
 
