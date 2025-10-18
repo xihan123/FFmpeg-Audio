@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/audio_config.sh"
 
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.2}"
+# Normalize version: remove 'n' prefix if present (e.g., n8.0 -> 8.0)
+FFMPEG_VERSION="${FFMPEG_VERSION#n}"
 WORKDIR="${WORKDIR:-$PWD}"
 SRC_DIR="${WORKDIR}/ffmpeg-${FFMPEG_VERSION}"
 INSTALL_DIR="${WORKDIR}/install"
